@@ -11,15 +11,17 @@ files=${files_old//\ \//,\/} #from " /" to ",/"
 version="2.5.5"
 title="ClamScan $version"
 
-date="$(date +"%H-%M-%S_%d-%m-%Y")"
+date="$(date +"%Y-%m-%d_%H-%M-%S")"
 
-path="$(kde4-config --path services)"
-spath="$(echo ${path%:*})"
-
-spath="$HOME/.local/share/kservices5/"
+kde5="$(which kded5)"; 
+if [ -x "$kde5" ]; then 
+  spath="$HOME/.local/share/kservices5/"
+else 
+  path="$(kde4-config --path services)"
+  spath="$(echo ${path%:*})"
+fi
 
 error_sentence="No files selected." #english
-empty="0"
 
 if [ $language = "de" ]; then
   wait="ClamAV scannt, bitte warten."
@@ -71,73 +73,75 @@ else
   scan_sentence="Scanning files: "
 fi
 
-pid=$(pidof clamd)
-if [-n $pid]; then
-  binary=$(which clamdscan)
+pid="$(pidof clamd)"
+if [ -n "$pid" ]; then
+  binary="$(which clamdscan)"
+  # fdpass allows clamdscan to run as the local user
+  # clamdscan does not accept a "-r" switch for recursing directories
+  options="--fdpass"
+  multiscan="--multiscan"
 else
-  binary=$(which clamscan)
+  binary="$(which clamscan)"
+  # check directories recursively
+  options="-r"
+  multiscan=""
 fi
 
-if [ -x $binary ]; then
-
-  log_dir="$spath"ServiceMenus/ClamScan/logs/
-  if [ ! -d $log_dir ]; then 
-    mkdir $log_dir
-  fi
-
-  log_result="$log_dir"ClamScan_result_$date.log
-  log_temp="$log_dir"ClamScan_$date.log
-
-  real_files="$(echo "$files" | cut -c $lang_l-)"
-  complete_amount="$(find -L $files -type f | wc -l)"
-  complete_amount_dir="$(find -L $files -type d | wc -l)"
-
-  if  [ $complete_amount = "0" ]; then 
-    if  [ $complete_amount_dir = "0" ]; then
-      empty="1"
-    fi
-  fi
-  
-  if  [ $empty != "1" ]; then
-    echo "Result ($binary):" > "$log_result"
-    nohup clamscan -r --log="$log_result" --stdout $real_files > "$log_temp" 2>&1 &
-    current_lines="0"
-
-    progress=$(kdialog --title "$title" --progressbar "$wait $scan_sentence $complete_amount ($complete_amount_dir directories)")
-
-    #qdbus $progress org.kde.kdialog.ProgressDialog.showCancelButton true
-  else
-    echo "$error_sentence" >> "$log_result"
-  fi
-
-  if  [ "${empty}" != "1"  ]; then
-    IFS=" " #Necessary, progressbar wouldn't work without it
-    checklines="$(expr $current_lines \> $complete_amount)"
-    while [ $checklines != "1"  ]; do
-      #cancelled=$(qdbus $progress org.kde.kdialog.ProgressDialog.wasCancelled) # TODO: this code doesn't work
-      if [ "${cancelled}" = "true" ]; then
-        break
-      fi
-      qdbus $progress Set org.kde.kdialog.ProgressDialog value $current_lines # TODO: if cancelled don't do this (or break before it)
-      current_lines="$(cat "$log_temp" | wc -l)"
-      checklines="$(expr $current_lines \> $complete_amount)"
-    done
-    
-    qdbus $progress org.kde.kdialog.ProgressDialog.setLabelText "Finished" # TODO: don't do that if cancelled
-    qdbus $progress org.kde.kdialog.ProgressDialog.close # TODO: don't do that if cancelled
-    
-    if [ -f "$log_result" ]; then 
-      if [ $checklines = "1" ]; then
-        kdialog --title "$title" --textbox "$log_result" 500 400
-        rm "$log_temp"
-      else 
-        kill $!
-      fi
-    fi
-  else
-    kdialog --title "$title" --textbox "$log_result" 500 400
-  fi
-
-else 
+if [ ! -x $binary ]; then
   kdialog --title "$title" --msgbox "$not_found"
+  exit 1
 fi
+
+log_dir="$spath"ServiceMenus/ClamScan/logs/
+if [ ! -d $log_dir ]; then 
+  mkdir $log_dir
+fi
+
+log_result="$log_dir"ClamScan_result_$date.log
+log_temp="$log_dir"ClamScan_$date.log
+
+real_files="$(echo "$files" | cut -c $lang_l-)"
+complete_amount="$(find -L $files -type f | wc -l)"
+complete_amount_dir="$(find -L $files -type d | wc -l)"
+
+if  [ $complete_amount = "0" ]; then 
+  if  [ $complete_amount_dir = "0" ]; then
+    echo "$error_sentence" >> "$log_result"
+    kdialog --title "$title" --textbox "$log_result" 500 400
+    sleep 5
+    exit 2
+  fi
+fi
+
+echo "Result ($binary):" > "$log_result"
+## echo $binary $options $multiscan --log="$log_result" --stdout $real_files >> "$log_result"
+#background the call to the anti virus checker binary
+nohup $binary $options $multiscan --log="$log_result" --stdout $real_files > "$log_temp" 2>&1 &
+
+current_lines="0"
+
+#launch a dialog window, capture id in $progress
+progress=$(kdialog --title "$title" --progressbar "$wait $scan_sentence $complete_amount ($complete_amount_dir directories)")
+#disable cancel button
+qdbus $progress org.kde.kdialog.ProgressDialog.showCancelButton false
+
+IFS=" " 
+
+#loop while the backgrounded process is still running.
+while kill -0 $! 2> /dev/null; do
+    qdbus $progress Set org.kde.kdialog.ProgressDialog value $current_lines
+    current_lines=$(echo $current_lines+1 | bc)
+    sleep 1
+done
+
+qdbus $progress org.kde.kdialog.ProgressDialog.setLabelText "Finished" 
+qdbus $progress org.kde.kdialog.ProgressDialog.close 
+
+if [ ! -f "$log_result" ]; then
+  exit 1
+fi
+
+## success and tidy up 
+kdialog --title "$title" --textbox "$log_result" 500 400
+rm "$log_temp" "$log_result"
+exit 0

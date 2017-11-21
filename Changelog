@@ -1,3 +1,21 @@
+2017-11-21 (3.0.0)
+- Imported code from https://store.kde.org/p/998441/ made by Incarus
+- Updated to be compatible with KDE5 file structure
+- Added support for clamdscan if clamd is running, otherwise clamscan is used
+  - clamdscan responds a lot quicker than clamscan as it is already running.
+- Changed progress bar to check for completion of background ClamAV scanning process.
+  - Not perfect yet still needs some work, but better then before.
+- Updated installation and deinstallation scripts to work with KDE5
+- Scan script exits with error code under error conditions, 0 for success. 
+- Both log files are now deleted on completion of successful scan to avoid build up of log files.
+
+
+================================================================================
+
+The below changes were performed in the original code before being forked.
+
+================================================================================
+
 2013-6-18 (2.5.7)
 - fixed permissions
 
